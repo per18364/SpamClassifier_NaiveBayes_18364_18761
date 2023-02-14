@@ -7,7 +7,6 @@ data = pd.read_csv('entrenamiento.txt', sep='\t',
 # print(data.shape)
 # data.head()
 # data['label'].value_counts(normalize=True)
-# data = data.replace(['ham', 'spam'], [0, 1])
 
 # Randomize dataset
 data_random = data.sample(frac=1, random_state=1)
@@ -106,4 +105,42 @@ def classify(message):
         print('Equal probabilities, have a human classify this!')
 
 
-classify('WINNER!! This is the secret code to unlock the money: C3421.')
+# Testing
+def classify_test_set(message):
+    message = re.sub('\W', ' ', message)
+    message = message.lower().split()
+
+    p_spam_given_message = p_spam
+    p_ham_given_message = p_ham
+
+    for word in message:
+        if word in parameters_spam:
+            p_spam_given_message *= parameters_spam[word]
+        if word in parameters_ham:
+            p_ham_given_message *= parameters_ham[word]
+
+    if p_ham_given_message > p_spam_given_message:
+        return 'ham'
+    elif p_ham_given_message < p_spam_given_message:
+        return 'spam'
+    else:
+        return 'needs human classification'
+
+
+test_set['predicted'] = test_set['sms'].apply(classify_test_set)
+# test_set.head()
+
+correct = 0
+total = test_set.shape[0]
+
+for row in test_set.iterrows():
+    row = row[1]
+    if row['label'] == row['predicted']:
+        correct += 1
+
+print('Correct:', correct)
+print('Incorrect:', total - correct)
+print('Accuracy:', correct/total)
+
+# usr_input = input('Mensaje que desee determinar como Spam o Ham: ')
+# classify(usr_input)
