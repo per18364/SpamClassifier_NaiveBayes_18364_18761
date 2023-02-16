@@ -1,146 +1,96 @@
 import pandas as pd
 import re
+import random
 
 
-data = pd.read_csv('entrenamiento.txt', sep='\t',
-                   header=None, names=['label', 'sms'])
-# print(data.shape)
-# data.head()
-# data['label'].value_counts(normalize=True)
+data = pd.read_csv("entrenamiento.txt", sep="\t",
+                   header=None, names=["label", "sms"])
 
-# Randomize dataset
-data_random = data.sample(frac=1, random_state=1)
+data = data.sample(frac=1, random_state=42).reset_index(drop=True)
 
-# Splitting 80% Training - 20% Testing
-training_test_index = round(len(data_random) * 0.8)
+train_size = int(len(data) * 0.8)
+train_data = data[:train_size]
+test_data = data[train_size:]
 
-training_set = data_random[:training_test_index].reset_index(drop=True)
-test_set = data_random[training_test_index:].reset_index(drop=True)
-# print(training_set.shape)
-# print(test_set.shape)
-# training_set['label'].value_counts(normalize=True)
-# test_set['label'].value_counts(normalize=True)
+train_data["sms"] = train_data["sms"].apply(
+    lambda x: re.sub("[^a-zA-Z\s]", "", x).lower())
 
-# Cleaning
-training_set['sms'] = training_set['sms'].str.replace('\W', ' ')
-training_set['sms'] = training_set['sms'].str.lower()
-# training_set.head(3)
+vocabulary = set()
+for sms in train_data["sms"]:
+    words = sms.split()
+    vocabulary.update(words)
 
-# Vocabulario
-training_set['sms'] = training_set['sms'].str.split()
+word_counts = {word: [0, 0] for word in vocabulary}
+for i, sms in train_data.iterrows():
+    words = sms["sms"].split()
+    for word in words:
+        word_counts[word][0 if sms["label"] == "ham" else 1] += 1
 
-vocabulary = []
-for sms in training_set['sms']:
-    for word in sms:
-        vocabulary.append(word)
+p_spam = len(train_data[train_data["label"] == "spam"]) / len(train_data)
+p_ham = 1 - p_spam
 
-vocabulary = list(set(vocabulary))
+n_words_spam = sum([count[1] for count in word_counts.values()])
+n_words_ham = sum([count[0] for count in word_counts.values()])
 
-# Training Final
-word_counts_per_sms = {unique_word: [
-    0] * len(training_set['sms']) for unique_word in vocabulary}
-for index, sms in enumerate(training_set['sms']):
-    for word in sms:
-        word_counts_per_sms[word][index] += 1
-
-word_counts = pd.DataFrame(word_counts_per_sms)
-# word_counts.head()
-
-training_set_clean = pd.concat([training_set, word_counts], axis=1)
-# training_set_clean.head()
-
-# Calculos
-spam_messages = training_set_clean[training_set_clean['label'] == 'spam']
-ham_messages = training_set_clean[training_set_clean['label'] == 'ham']
-
-p_spam = len(spam_messages) / len(training_set_clean)
-p_ham = len(ham_messages) / len(training_set_clean)
-
-n_words_per_spam_message = spam_messages['sms'].apply(len)
-n_spam = n_words_per_spam_message.sum()
-
-n_words_per_ham_message = ham_messages['sms'].apply(len)
-n_ham = n_words_per_ham_message.sum()
-
-n_vocabulary = len(vocabulary)
-alpha = 1
-
-# Parametros
-parameters_spam = {unique_word: 0 for unique_word in vocabulary}
-parameters_ham = {unique_word: 0 for unique_word in vocabulary}
-
-for word in vocabulary:
-    n_word_given_spam = spam_messages[word].sum()
-    p_word_given_spam = (n_word_given_spam + alpha) / \
-        (n_spam + alpha * n_vocabulary)
-    parameters_spam[word] = p_word_given_spam
-
-    n_word_given_ham = ham_messages[word].sum()
-    p_word_given_ham = (n_word_given_ham + alpha) / \
-        (n_ham + alpha * n_vocabulary)
-    parameters_ham[word] = p_word_given_ham
+parameters_spam = {word: (count[1] + 1) / (n_words_spam + len(vocabulary))
+                   for word, count in word_counts.items()}
+parameters_ham = {word: (count[0] + 1) / (n_words_ham + len(vocabulary))
+                  for word, count in word_counts.items()}
 
 
-def classify(message):
-    message = re.sub('\W', ' ', message)
-    message = message.lower().split()
+test_data["sms"] = test_data["sms"].apply(
+    lambda x: re.sub("[^a-zA-Z\s]", "", x).lower())
+
+
+def predict(sms):
+    words = sms.split()
+    p_spam_given_sms = p_spam
+    p_ham_given_sms = p_ham
+    for word in words:
+        if word in parameters_spam:
+            p_spam_given_sms *= parameters_spam[word]
+        if word in parameters_ham:
+            p_ham_given_sms *= parameters_ham[word]
+    if p_spam_given_sms > p_ham_given_sms:
+        return "spam"
+    else:
+        return "ham"
+
+
+train_data["predicted_label"] = train_data["sms"].apply(predict)
+test_data["predicted_label"] = test_data["sms"].apply(predict)
+
+
+accuracy_train = (train_data["label"] == train_data["predicted_label"]).mean()
+print("Training accuracy:", accuracy_train)
+
+
+accuracy = (test_data["label"] == test_data["predicted_label"]).mean()
+print("Test Accuracy:", accuracy)
+
+
+def classify_message(message):
+    # Clean the message
+    message = re.sub("[^a-zA-Z\s]", "", message).lower()
 
     p_spam_given_message = p_spam
     p_ham_given_message = p_ham
-
-    for word in message:
+    for word in message.split():
         if word in parameters_spam:
             p_spam_given_message *= parameters_spam[word]
         if word in parameters_ham:
             p_ham_given_message *= parameters_ham[word]
 
-    print('P(Spam|message):', p_spam_given_message)
-    print('P(Ham|message):', p_ham_given_message)
-
-    if p_ham_given_message > p_spam_given_message:
-        print('Label: Ham')
-    elif p_ham_given_message < p_spam_given_message:
-        print('Label: Spam')
+    if p_spam_given_message > p_ham_given_message:
+        return "spam"
     else:
-        print('Equal probabilities, have a human classify this!')
+        return "ham"
 
 
-# Testing
-def classify_test_set(message):
-    message = re.sub('\W', ' ', message)
-    message = message.lower().split()
-
-    p_spam_given_message = p_spam
-    p_ham_given_message = p_ham
-
-    for word in message:
-        if word in parameters_spam:
-            p_spam_given_message *= parameters_spam[word]
-        if word in parameters_ham:
-            p_ham_given_message *= parameters_ham[word]
-
-    if p_ham_given_message > p_spam_given_message:
-        return 'ham'
-    elif p_ham_given_message < p_spam_given_message:
-        return 'spam'
+while True:
+    message = input("Enter a message to classify (or 'quit' to exit): ")
+    if message == "quit":
+        break
     else:
-        return 'needs human classification'
-
-
-test_set['predicted'] = test_set['sms'].apply(classify_test_set)
-# test_set.head()
-
-correct = 0
-total = test_set.shape[0]
-
-for row in test_set.iterrows():
-    row = row[1]
-    if row['label'] == row['predicted']:
-        correct += 1
-
-print('Correct:', correct)
-print('Incorrect:', total - correct)
-print('Accuracy:', correct/total)
-
-# usr_input = input('Mensaje que desee determinar como Spam o Ham: ')
-# classify(usr_input)
+        label = classify_message(message)
+        print("Predicted label:", label)
